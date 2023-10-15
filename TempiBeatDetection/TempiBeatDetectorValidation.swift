@@ -19,27 +19,29 @@ extension TempiBeatDetector {
     }
     
     private func projectURL() -> NSURL {
-        let projectPath = "/Users/jscalo/Developer/Tempi/com.github/TempiBeatDetection"
-        return NSURL.fileURLWithPath(projectPath)
+        let projectPath = "/Users/sven/git/TempiBeatDetection"
+        return NSURL.fileURL(withPath: projectPath) as NSURL
     }
 
     private func validationSetup() {
         if self.savePlotData {
             let projectURL: NSURL = self.projectURL()
             
-            var plotDataURL = projectURL.URLByAppendingPathComponent("Peak detection plots")
-            plotDataURL = plotDataURL.URLByAppendingPathComponent("\(self.currentTestName)-plotData.txt")
+            var plotDataURL = projectURL.appendingPathComponent("Peak detection plots")
+            plotDataURL = plotDataURL!.appendingPathComponent(String(format:"%@-plotData.txt", self.currentTestName))
+            print(String(format:"plot data file %@", plotDataURL!.path));
             
-            var plotMarkersURL = projectURL.URLByAppendingPathComponent("Peak detection plots")
-            plotMarkersURL = plotMarkersURL.URLByAppendingPathComponent("\(self.currentTestName)-plotMarkers.txt")
-            
+            var plotMarkersURL = projectURL.appendingPathComponent("Peak detection plots")
+            plotMarkersURL = plotMarkersURL!.appendingPathComponent(String(format:"%@-plotMarkers.txt", self.currentTestName))
+            print(String(format:"plot markers file %@", plotMarkersURL!.path));
+
             do {
-                try NSFileManager.defaultManager().removeItemAtURL(plotDataURL)
-                try NSFileManager.defaultManager().removeItemAtURL(plotMarkersURL)
+                try FileManager.default.removeItem(at: plotDataURL!)
+                try FileManager.default.removeItem(at: plotMarkersURL!)
             } catch _ { /* normal if file not yet created */ }
             
-            self.plotFFTDataFile = fopen(plotDataURL.fileSystemRepresentation, "w")
-            self.plotMarkersFile = fopen(plotMarkersURL.fileSystemRepresentation, "w")
+            self.plotFFTDataFile = fopen(plotDataURL!.path, "w")
+            self.plotMarkersFile = fopen(plotMarkersURL!.path, "w")
         }
         
         self.testTotal = 0
@@ -60,9 +62,9 @@ extension TempiBeatDetector {
                            variance: Float = 2.0) {
         
         let projectURL: NSURL = self.projectURL()
-        let songURL = projectURL.URLByAppendingPathComponent("Test Media/\(path)")
+        let songURL = projectURL.appendingPathComponent("Test Media/\(path)")
         
-        let avAsset: AVURLAsset = AVURLAsset(URL: songURL)
+        let avAsset: AVURLAsset = AVURLAsset(url: songURL!)
         
         print("Start testing: \(path)")
         
@@ -87,7 +89,7 @@ extension TempiBeatDetector {
             return
         }
         
-        let settings: [String : AnyObject] = [ AVFormatIDKey : Int(kAudioFormatLinearPCM),
+        let settings: [String : Any] = [ AVFormatIDKey : Int(kAudioFormatLinearPCM),
                          AVSampleRateKey : self.sampleRate,
                          AVLinearPCMBitDepthKey : 32,
                          AVLinearPCMIsFloatKey : true,
@@ -95,7 +97,7 @@ extension TempiBeatDetector {
         
         let output: AVAssetReaderAudioMixOutput = AVAssetReaderAudioMixOutput.init(audioTracks: avAsset.tracks, audioSettings: settings)
         
-        assetReader.addOutput(output)
+        assetReader.add(output)
         
         if !assetReader.startReading() {
             print("assetReader.startReading() failed")
@@ -126,13 +128,13 @@ extension TempiBeatDetector {
             var blockBuffer: CMBlockBuffer?
             
             status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(nextBuffer,
-                                                                             nil,
-                                                                             &bufferList,
-                                                                             sizeof(AudioBufferList),
-                                                                             nil,
-                                                                             nil,
-                                                                             kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
-                                                                             &blockBuffer)
+                                                                             bufferListSizeNeededOut: nil,
+                                                                             bufferListOut: &bufferList,
+                                                                             bufferListSize: MemoryLayout<AudioBufferList>.size,
+                                                                             blockBufferAllocator: nil,
+                                                                             blockBufferMemoryAllocator: nil,
+                                                                             flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+                                                                             blockBufferOut: &blockBuffer)
             
             if status != 0 {
                 print("*** CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer failed with error \(status)")
@@ -140,14 +142,9 @@ extension TempiBeatDetector {
             }
             
             // Move samples from mData into our native [Float] format.
-            // (There's probably an better way to do this using UnsafeBufferPointer but I couldn't make it work.)
-            for i in 0..<bufferSampleCnt {
-                let ptr = UnsafePointer<Float>(bufferList.mBuffers.mData)
-                let newPtr = ptr + i
-                let sample = unsafeBitCast(newPtr.memory, Float.self)
-                queuedSamples.append(sample)
-            }
-
+            let ptr = bufferList.mBuffers.mData?.assumingMemoryBound(to: Float.self)
+            queuedSamples.append(contentsOf: UnsafeBufferPointer(start: ptr, count: Int(bufferSampleCnt)))
+            
             // We have a big buffer of audio (whatever CoreAudio decided to give us).
             // Now iterate over the buffer, sending a chunkSize's (e.g. 4096 samples) worth of data to the analyzer and then
             // shifting by hopSize (e.g. 132 samples) after each iteration. If there's not enough data in the buffer (bufferSampleCnt < chunkSize),
@@ -191,14 +188,14 @@ extension TempiBeatDetector {
     }
     
     private func testSetFinish() {
-        let mean: Float = tempi_mean(self.testSetResults)
+        let mean: Float = tempi_mean(a: self.testSetResults)
         print(String(format:"Validation set [%@] accuracy: %.01f%%\n", self.currentTestSetName, mean));
     }
     
     private func oneOffTest() {
-        self.testSetSetupForSetName("oneOff")
+        self.testSetSetupForSetName(setName: "oneOff")
 
-        self.testAudio("Studio/Learn To Fly.mp3",
+        self.testAudio(path: "Studio/Learn To Fly.mp3",
                        label: "learn-to-fly",
                        actualTempo: 136,
                        startTime: 0, endTime: 15,
@@ -209,51 +206,51 @@ extension TempiBeatDetector {
     }
     
     private func validateStudioSet1 () {
-        self.testSetSetupForSetName("studioSet1")
+        self.testSetSetupForSetName(setName: "studioSet1")
         
-        self.testAudio("Studio/Skinny Sweaty Man.mp3",
+        self.testAudio(path: "Studio/Skinny Sweaty Man.mp3",
                        label: "skinny-sweaty-man",
                        actualTempo: 141,
                        startTime: 0, endTime: 15,
                        minTempo: 80, maxTempo: 160,
                        variance: 3)
         
-        self.testAudio("Studio/Satisfaction.mp3",
+        self.testAudio(path: "Studio/Satisfaction.mp3",
                        label: "satisfaction",
                        actualTempo: 137,
                        startTime: 0, endTime: 20,
                        minTempo: 80, maxTempo: 160,
                        variance: 2.5)
 
-        self.testAudio("Studio/Louie, Louie.mp3",
+        self.testAudio(path: "Studio/Louie, Louie.mp3",
                        label: "louie-louie",
                        actualTempo: 120,
                        startTime: 0, endTime: 15,
                        minTempo: 60, maxTempo: 120,
                        variance: 3)
 
-        self.testAudio("Studio/Learn To Fly.mp3",
+        self.testAudio(path: "Studio/Learn To Fly.mp3",
                        label: "learn-to-fly",
                        actualTempo: 136,
                        startTime: 0, endTime: 15,
                        minTempo: 80, maxTempo: 160,
                        variance: 2)
 
-        self.testAudio("Studio/HBFS.mp3",
+        self.testAudio(path: "Studio/HBFS.mp3",
                        label: "harder-better-faster-stronger",
                        actualTempo: 123,
                        startTime: 0, endTime: 15,
                        minTempo: 80, maxTempo: 160,
                        variance: 2)
 
-        self.testAudio("Studio/Waving Flag.mp3",
+        self.testAudio(path: "Studio/Waving Flag.mp3",
                        label: "waving-flag",
                        actualTempo: 76,
                        startTime: 0, endTime: 15,
                        minTempo: 60, maxTempo: 120,
                        variance: 2)
 
-        self.testAudio("Studio/Back in Black.mp3",
+        self.testAudio(path: "Studio/Back in Black.mp3",
                        label: "back-in-black",
                        actualTempo: 90,
                        startTime: 0, endTime: 15,
@@ -264,69 +261,69 @@ extension TempiBeatDetector {
     }
     
     private func validateHomeSet1 () {
-        self.testSetSetupForSetName("homeSet1")
+        self.testSetSetupForSetName(setName: "homeSet1")
         
-        self.testAudio("Home/AG-Blackbird-1.mp3",
+        self.testAudio(path: "Home/AG-Blackbird-1.mp3",
                        label: "ag-blackbird1",
                        actualTempo: 94,
                        minTempo: 60, maxTempo: 120,
                        variance: 3)
 
-        self.testAudio("Home/AG-Blackbird-2.mp3",
+        self.testAudio(path: "Home/AG-Blackbird-2.mp3",
                        label: "ag-blackbird2",
                        actualTempo: 95,
                        minTempo: 60, maxTempo: 120,
                        variance: 3)
         
-        self.testAudio("Home/AG-Sunset Road-116-1.mp3",
+        self.testAudio(path: "Home/AG-Sunset Road-116-1.mp3",
                        label: "ag-sunsetroad1",
                        actualTempo: 116,
                        minTempo: 80, maxTempo: 160,
                        variance: 2)
         
-        self.testAudio("Home/AG-Sunset Road-116-2.mp3",
+        self.testAudio(path: "Home/AG-Sunset Road-116-2.mp3",
                        label: "ag-sunsetroad2",
                        actualTempo: 116,
                        minTempo: 80, maxTempo: 160,
                        variance: 2)
         
-        self.testAudio("Home/Possum-1.mp3",
+        self.testAudio(path: "Home/Possum-1.mp3",
                        label: "possum1",
                        actualTempo: 79,
                        minTempo: 60, maxTempo: 120,
                        variance: 2)
         
-        self.testAudio("Home/Possum-2.mp3",
+        self.testAudio(path: "Home/Possum-2.mp3",
                        label: "possum2",
                        actualTempo: 81,
                        minTempo: 60, maxTempo: 120,
                        variance: 3)
         
-        self.testAudio("Home/Hard Top-1.mp3",
+        self.testAudio(path: "Home/Hard Top-1.mp3",
                        label: "hard-top1",
                        actualTempo: 133,
                        minTempo: 80, maxTempo: 160,
                        variance: 2)
         
-        self.testAudio("Home/Hard Top-2.mp3",
+        self.testAudio(path: "Home/Hard Top-2.mp3",
                        label: "hard-top2",
                        actualTempo: 146,
                        minTempo: 80, maxTempo: 160,
                        variance: 2)
         
-        self.testAudio("Home/Definitely Delicate-1.mp3",
+        self.testAudio(path: "Home/Definitely Delicate-1.mp3",
                        label: "delicate1",
                        actualTempo: 75,
                        minTempo: 60, maxTempo: 120,
                        variance: 3)
         
-        self.testAudio("Home/Wildwood Flower-1.mp3",
+        self.testAudio(path: "Home/Wildwood Flower-1.mp3",
                        label: "wildwood1",
                        actualTempo: 95,
                        minTempo: 80, maxTempo: 160,
                        variance: 3)
         
-        self.testAudio("Home/Wildwood Flower-2.mp3",
+        self.testAudio(path: "Home/Wildwood Flower-2.mp3",
                        label: "wildwood2",
                        actualTempo: 148,
                        minTempo: 80, maxTempo: 160,
@@ -336,37 +333,37 @@ extension TempiBeatDetector {
     }
     
     private func validateThreesSet1 () {
-        self.testSetSetupForSetName("threesSet1")
+        self.testSetSetupForSetName(setName: "threesSet1")
 
-        self.testAudio("Threes/Norwegian Wood.mp3",
+        self.testAudio(path: "Threes/Norwegian Wood.mp3",
                        label: "norwegian-wood",
                        actualTempo: 180,
                        startTime: 0, endTime: 0,
                        minTempo: 100, maxTempo: 200,
                        variance: 3)
 
-        self.testAudio("Threes/Drive In Drive Out.mp3",
+        self.testAudio(path: "Threes/Drive In Drive Out.mp3",
                        label: "drive-in-drive-out",
                        actualTempo: 81,
                        startTime: 0, endTime: 0,
                        minTempo: 60, maxTempo: 120,
                        variance: 2)
         
-        self.testAudio("Threes/Oh How We Danced.mp3",
+        self.testAudio(path: "Threes/Oh How We Danced.mp3",
                        label: "oh-how-we-danced",
                        actualTempo: 180,
                        startTime: 0, endTime: 20,
                        minTempo: 100, maxTempo: 200,
                        variance: 2)
         
-        self.testAudio("Threes/Texas Flood.mp3",
+        self.testAudio(path: "Threes/Texas Flood.mp3",
                        label: "texas-flood",
                        actualTempo: 60,
                        startTime: 0, endTime: 20,
                        minTempo: 40, maxTempo: 120,
                        variance: 2)
         
-        self.testAudio("Threes/Brahms Lullaby.mp3",
+        self.testAudio(path: "Threes/Brahms Lullaby.mp3",
                        label: "brahms-lullaby",
                        actualTempo: 70,
                        startTime: 0, endTime: 15,
@@ -378,23 +375,23 @@ extension TempiBeatDetector {
     }
     
     private func validateUtilitySet1 () {
-        self.testSetSetupForSetName("utilitySet1")
+        self.testSetSetupForSetName(setName: "utilitySet1")
 
-        self.testAudio("Utility/metronome-88.mp3",
+        self.testAudio(path: "Utility/metronome-88.mp3",
                        label: "metronome-88",
                        actualTempo: 88,
                        startTime: 0, endTime: 10,
                        minTempo: 40, maxTempo: 240,
                        variance: 1)
 
-        self.testAudio("Utility/metronome-126.mp3",
+        self.testAudio(path: "Utility/metronome-126.mp3",
                        label: "metronome-126",
                        actualTempo: 126,
                        startTime: 0, endTime: 15,
                        minTempo: 40, maxTempo: 240,
                        variance: 1)
 
-        self.testAudio("Utility/1sTones.wav",
+        self.testAudio(path: "Utility/1sTones.wav",
                        label: "1s-tones",
                        actualTempo: 60,
                        startTime: 0, endTime: 10,

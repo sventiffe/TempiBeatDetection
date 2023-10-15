@@ -14,8 +14,8 @@ struct TempiPeak {
 }
 
 typealias TempiPeakDetectionCallback = (
-    timeStamp: Double,
-    magnitude: Float
+    _ timeStamp: Double,
+    _ magnitude: Float
     ) -> Void
 
 class TempiPeakDetector: NSObject {
@@ -47,7 +47,7 @@ class TempiPeakDetector: NSObject {
     
     private var lastPeakTick: Int = 0
 
-    init(peakDetectionCallback callback: TempiPeakDetectionCallback, sampleRate: Float) {
+    init(peakDetectionCallback callback: @escaping TempiPeakDetectionCallback, sampleRate: Float) {
         self.peakDetectionCallback = callback
         self.sampleRate = sampleRate
         self.sampleInterval = 1.0 / Double(sampleRate)
@@ -89,7 +89,7 @@ class TempiPeakDetector: NSObject {
         self.counter += 1
         self.lastMagnitude = magnitude
         
-        self.evaluatePeakQueue(timeStamp)
+        self.evaluatePeakQueue(timeStamp: timeStamp)
     }
     
     private func handlePeak(timeStamp timeStamp: Double, magnitude: Float, longWindowThreshold: Float) {
@@ -98,7 +98,7 @@ class TempiPeakDetector: NSObject {
         // We might have a peak, but only if the incoming magnitude > some fraction of the loudest recent (1s) mag
         if magnitude >= longWindowThreshold {
             if (self.coalesceInterval == 0.0) {
-                self.peakDetectionCallback(timeStamp: timeStamp, magnitude: magnitude)
+                self.peakDetectionCallback(timeStamp, magnitude)
             } else {
                 peakQueue.append(TempiPeak(timeStamp: timeStamp, magnitude: magnitude))
             }
@@ -125,7 +125,7 @@ class TempiPeakDetector: NSObject {
             }
 
             self.peakQueue.removeAll()
-            self.peakDetectionCallback(timeStamp: max.timeStamp, magnitude: max.magnitude)
+            self.peakDetectionCallback(max.timeStamp, max.magnitude)
         }
     }
     
